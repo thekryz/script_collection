@@ -83,41 +83,8 @@
 # ║                                                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
-# =============================================================================
-# LOCALE STANDARDIZATION
-# =============================================================================
-# [HISTORY]
-# Problem:  System tools (diskutil, system_profiler) output localized strings
-#           based on user's language settings. On German Macs: "Seriennummer"
-#           instead of "Serial Number", "Speicher" instead of "Memory", etc.
-#           All grep/awk parsing silently failed, returning empty strings.
-#           This affected ~40% of non-English Mac users globally.
-#
-# Solution: Force POSIX/C locale for all child processes. Ensures all system
-#           tool outputs use standardized English regardless of user's
-#           language preferences. Must be set BEFORE any commands run.
-#           Both LC_ALL and LANG set for maximum compatibility across
-#           different macOS versions and shell configurations.
-# =============================================================================
 export LC_ALL=C
 export LANG=C
-
-# =============================================================================
-# BASH STRICT MODE DECISION
-# =============================================================================
-# [HISTORY]
-# Problem:  Using 'set -e' (errexit) caused premature script termination when:
-#           - grep found no matches (exit code 1, but valid "nothing found")
-#           - Optional system tools weren't available on all Mac models
-#           - Commands returned non-zero for legitimate reasons
-#           This made error handling unpredictable and debugging difficult.
-#
-# Solution: Intentionally NOT using strict mode. Errors handled explicitly:
-#           - '|| true' for optional/expected-to-fail checks
-#           - Proper conditionals for critical operations
-#           - Explicit error messages when something truly fails
-#           Trade-off: More verbose code for reliable cross-Mac operation.
-# =============================================================================
 
 # =============================================================================
 # CONFIGURATION CONSTANTS
@@ -130,13 +97,6 @@ readonly MIN_MACOS_VERSION="10.15"
 
 # =============================================================================
 # THRESHOLD CONSTANTS
-# =============================================================================
-# [MAINTAINABILITY] Centralized threshold definitions
-# Problem:  Magic numbers scattered throughout code (battery cycles, disk
-#           percentages, etc.) made tuning difficult and inconsistent.
-# Solution: Define all thresholds as named constants. Easier to adjust,
-#           document, and maintain. Values based on Apple's guidelines and
-#           community experience.
 # =============================================================================
 readonly BATTERY_CYCLES_EXCELLENT=300
 readonly BATTERY_CYCLES_GOOD=500
@@ -155,17 +115,6 @@ readonly STRESS_TEST_DURATION=60           # Seconds
 # =============================================================================
 # REPORT PATH HANDLING
 # =============================================================================
-# [HISTORY]
-# Problem:  Hardcoded "$HOME/Desktop" failed when:
-#           - Desktop folder was renamed or iCloud-synced
-#           - Network home directories with different structure
-#           - Enterprise environments with restricted permissions
-#           - Non-English systems with localized folder names
-#
-# Solution: Generate path at runtime, verify write permission before use,
-#           provide clear error if write fails. Filename includes timestamp
-#           to prevent overwrites. Falls back gracefully to skip-report mode.
-# =============================================================================
 REPORT_FILE=""
 
 # CLI Flags (mutable by argument parser)
@@ -175,17 +124,6 @@ VERBOSE_MODE=false
 
 # =============================================================================
 # TERMINAL COLOR HANDLING
-# =============================================================================
-# [HISTORY]
-# Problem:  Hardcoded ANSI escape codes produced garbage characters when:
-#           - Script output piped to file (bash script.sh > log.txt)
-#           - Redirected to another process
-#           - Run in non-interactive terminals (cron, CI/CD pipelines)
-#           - Certain terminal emulators with limited support
-#
-# Solution: Check if stdout is a TTY (interactive terminal). Only use colors
-#           in interactive mode. All color variables become empty strings in
-#           non-TTY mode, making them safe to use unconditionally in output.
 # =============================================================================
 if [[ -t 1 ]]; then
     readonly BOLD=$'\033[1m'
@@ -220,17 +158,6 @@ INFO_COUNT=0
 # =============================================================================
 # ARRAY DECLARATION COMPATIBILITY
 # =============================================================================
-# [HISTORY]
-# Problem:  'declare -a ARRAY=()' syntax behaves differently in bash 3.x
-#           (macOS default) vs bash 4.x+. Some array operations that work
-#           in bash 4 silently fail or behave unexpectedly in bash 3.2.
-#           macOS ships with bash 3.2 due to GPL v3 licensing (Apple won't
-#           include GPLv3 software).
-#
-# Solution: Use simple ARRAY=() initialization without 'declare'. Compatible
-#           with bash 3.2+ and works reliably across all macOS versions.
-#           Avoid associative arrays entirely (bash 4+ only feature).
-# =============================================================================
 CRITICAL_ISSUES=()
 WARNING_ISSUES=()
 MANUAL_CHECKS=()
@@ -239,15 +166,6 @@ MANUAL_CHECKS=()
 HW_DATA_CACHE=""
 POWER_DATA_CACHE=""
 GPU_DATA_CACHE=""
-# =============================================================================
-# [OPTIMIZATION] ioreg Cache
-# Problem:  ioreg -l parses the entire IORegistry tree (~50MB+ of data).
-#           Multiple calls throughout the script caused 10-15 seconds of
-#           unnecessary overhead. Battery, Touch ID, board-id checks all
-#           called ioreg separately.
-# Solution: Cache full ioreg output once, grep from cache. Single 2-3 second
-#           hit at startup instead of repeated delays throughout execution.
-# =============================================================================
 IOREG_CACHE=""
 CAMERA_DATA_CACHE=""
 AUDIO_DATA_CACHE=""
@@ -266,16 +184,6 @@ SYSTEM_CHIP=""
 SYSTEM_RAM=""
 HAS_TOUCH_BAR=false
 HAS_TOUCH_ID=false
-
-
-# =============================================================================
-# [ENHANCEMENT] Device Form Factor Detection
-# Problem:  Script was MacBook-centric, testing for built-in display, camera,
-#           speakers, and keyboard on desktop Macs that don't have these.
-#           This confused users and produced irrelevant test prompts.
-# Solution: Detect device type and component presence. Use these flags
-#           throughout the script to conditionally run appropriate tests.
-# =============================================================================
 DEVICE_TYPE=""              # "laptop", "desktop", "all-in-one"
 HAS_BUILTIN_DISPLAY=false
 HAS_BUILTIN_CAMERA=false
@@ -286,74 +194,29 @@ HAS_BUILTIN_KEYBOARD=false
 # =============================================================================
 # PROCESS SAFETY & CLEANUP
 # =============================================================================
-# [HISTORY - CRITICAL]
-# Problem:  Early stress test implementations used 'killall yes' which could
-#           terminate unrelated user processes with the same name (yes is a
-#           common Unix utility). When users pressed Ctrl+C during stress
-#           tests, 'yes' processes became orphans, continuing to consume
-#           100% CPU per process and causing system overheating. Some users
-#           reported fans running at max speed for hours after aborting.
-#
-# Solution: Maintain explicit PID array for all spawned processes. Register
-#           cleanup function via 'trap' for EXIT, INT (Ctrl+C), TERM, and HUP
-#           signals. Kill only processes we spawned using their specific PIDs.
-#           Suppress stderr to avoid "no such process" noise if already dead.
-#           Cleanup function is idempotent (safe to call multiple times).
-# =============================================================================
 STRESS_PIDS=()
 
 cleanup() {
     # Terminate any stress test processes we spawned
     if [[ ${#STRESS_PIDS[@]} -gt 0 ]]; then
         for pid in "${STRESS_PIDS[@]}"; do
-            # =============================================================
-            # [ROBUSTNESS] Graceful then forceful termination
-            # Problem:  Simple SIGTERM is ignored by some processes. During
-            #           script abort (Ctrl+C), yes processes could keep running.
-            # Solution: Send SIGTERM first, brief wait, then SIGKILL if needed.
-            # =============================================================
             kill -TERM "$pid" 2>/dev/null || true
             sleep 0.1
             kill -KILL "$pid" 2>/dev/null || true
         done
         STRESS_PIDS=()
     fi
-    # Clean up any temp files from log analysis timeout
-    # =========================================================================
-    # [ENHANCEMENT] Extended temp file cleanup
-    # Problem:  New active tests (display HTML, audio) create temp files that
-    #           could remain if script is interrupted via Ctrl+C mid-test.
-    # Solution: Clean up all known temp file patterns in cleanup function.
-    # =========================================================================
     rm -f /tmp/.mac_audit_wake_$$ 2>/dev/null || true
     rm -f /tmp/.mac_audit_display_test_$$.html 2>/dev/null || true
-    # Restore cursor visibility (may have been hidden during countdown)
     tput cnorm 2>/dev/null || true
 }
 
-# Register cleanup for all exit scenarios
 trap cleanup EXIT INT TERM HUP
 
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# Safe Integer Extraction
-# -----------------------------------------------------------------------------
-# [HISTORY]
-# Problem:  Bash integer comparisons like [[ $VAR -lt 100 ]] crash with
-#           "integer expression expected" when VAR is:
-#           - Empty string
-#           - Contains spaces or tabs
-#           - Has non-numeric characters (units like "GB", "mAh")
-#           - Contains localized number formats ("1.234,56")
-#           This caused script failures with unexpected system tool output.
-#
-# Solution: Wrapper that strips all non-digit characters, returns default
-#           value if result is empty. Always returns valid integer for
-#           comparisons. Caller specifies sensible default.
-# -----------------------------------------------------------------------------
 safe_int() {
     local val="$1"
     local default="${2:-0}"
@@ -366,38 +229,10 @@ safe_int() {
     fi
 }
 
-# -----------------------------------------------------------------------------
-# Bash 3.2 Compatible Uppercase
-# -----------------------------------------------------------------------------
-# [HISTORY]
-# Problem:  Bash 4.0 introduced ${var^^} for uppercase conversion, but macOS
-#           ships with Bash 3.2 by default (GPL v3 licensing). Using ${var^^}
-#           causes "bad substitution" error on stock macOS terminal.
-#           Users installing bash 4+ via Homebrew typically invoke scripts
-#           with 'bash script.sh', which uses /bin/bash (3.2) anyway.
-#
-# Solution: Use 'tr' command for case conversion. POSIX compliant, available
-#           on all Unix systems including macOS. Slightly slower but
-#           guaranteed to work regardless of bash version.
-# -----------------------------------------------------------------------------
 to_uppercase() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
 }
 
-# -----------------------------------------------------------------------------
-# Version Comparison Without External Tools
-# -----------------------------------------------------------------------------
-# [HISTORY]
-# Problem:  Comparing version strings like "10.15.7" vs "11.0" is non-trivial:
-#           - String comparison fails ("10" > "9" is false alphabetically)
-#           - Using 'bc' adds external dependency (not always installed)
-#           - 'sort -V' (version sort) not available on older macOS
-#           - 'printf "%d"' fails on multi-part versions
-#
-# Solution: Split version into components and compare numerically using only
-#           bash built-ins. Pure bash solution works on all macOS versions
-#           without any external dependencies. Returns 0 if v1 >= v2.
-# -----------------------------------------------------------------------------
 version_gte() {
     local v1="$1" v2="$2"
 
@@ -422,17 +257,6 @@ version_gte() {
     return 0  # Equal versions
 }
 
-# -----------------------------------------------------------------------------
-# Path Existence Checker
-# -----------------------------------------------------------------------------
-# [BUGFIX] Corrected return value semantics
-# Problem:  Original function returned found_count as exit code. Bash exit
-#           codes are 0-255, so >255 paths would overflow. Also, non-zero
-#           return typically means "error" in shell convention, but here it
-#           meant "found something" - confusing and error-prone for callers.
-# Solution: Output found paths to stdout (one per line). Return 0 if any found,
-#           1 if none found. Callers capture output and check if non-empty.
-# -----------------------------------------------------------------------------
 check_paths_exist() {
     local found_any=false
 
@@ -446,18 +270,6 @@ check_paths_exist() {
     [[ "$found_any" == true ]]
 }
 
-# =============================================================================
-# OUTPUT FORMATTING FUNCTIONS
-# =============================================================================
-
-# =============================================================================
-# [BUGFIX] Header Box Alignment
-# Problem:  The padding calculation used a fixed target width of 58, but the
-#           box characters themselves (║, spaces) weren't accounted for.
-#           This caused misaligned closing box characters in terminal output.
-# Solution: Use printf with precise field width. The inner content area is
-#           60 chars. Text is left-aligned, remaining space filled with spaces.
-# =============================================================================
 print_header() {
     local text="$1"
     local max_len=58
@@ -488,21 +300,6 @@ print_subsection() {
     echo -e "  ${BLUE}■ $1${NC}"
 }
 
-# =============================================================================
-# RESULT TRACKING FUNCTIONS
-# =============================================================================
-# [HISTORY]
-# Problem:  Earlier versions only printed results without tracking them.
-#           Impossible to generate summary reports, calculate risk scores,
-#           or export findings for later review. Users had to scroll back
-#           through terminal to find issues.
-#
-# Solution: Each result function updates global counters AND stores issue
-#           descriptions in arrays. Enables quantified risk scoring and
-#           comprehensive report generation. Consistent visual formatting
-#           while maintaining audit trail.
-# =============================================================================
-
 check_pass() {
     echo -e "    ${GREEN}${CHECKMARK}${NC} $1"
     ((PASS_COUNT++))
@@ -525,15 +322,6 @@ check_info() {
     ((INFO_COUNT++))
 }
 
-# =============================================================================
-# [ENHANCEMENT] Deduplicated manual check registration
-# Problem:  Some checks were added multiple times from different code paths,
-#           causing duplicate entries in the final checklist (e.g., "Test
-#           Recovery Mode" appeared twice). This confused users and made the
-#           checklist appear unprofessional.
-# Solution: Check if item already exists before adding. O(n) but n is small
-#           (typically <30 items). Maintains insertion order.
-# =============================================================================
 add_manual_check() {
     local new_check="$1"
     # Check for duplicates (exact match)
@@ -552,18 +340,6 @@ verbose_info() {
     fi
 }
 
-# =============================================================================
-# PROGRESS INDICATOR
-# =============================================================================
-# [HISTORY - NEW]
-# Problem:  During data gathering phases, script appeared frozen with no
-#           feedback. Users unsure if script was working or hung. Some
-#           cancelled and restarted unnecessarily.
-#
-# Solution: Simple progress indicator showing current operation. Uses
-#           carriage return to update in place without scrolling terminal.
-#           Cleared before next section to avoid visual clutter.
-# =============================================================================
 show_progress() {
     echo -ne "  ${GREY}⏳ $1...${NC}\r"
 }
@@ -607,13 +383,6 @@ check_prerequisites() {
         arm64)
             check_pass "Apple Silicon detected (arm64)"
             IS_APPLE_SILICON=true
-            # =================================================================
-            # [NEW CHECK] Rosetta 2 Installation Status
-            # Problem:  Apple Silicon Macs need Rosetta 2 to run Intel apps.
-            #           Missing Rosetta means buyer can't run many apps
-            #           immediately. Also indicates if Mac was ever used.
-            # Solution: Check if Rosetta is installed and inform accordingly.
-            # =================================================================
             if /usr/bin/pgrep -q oahd 2>/dev/null || [[ -f "/Library/Apple/usr/share/rosetta/rosetta" ]]; then
                 check_info "Rosetta 2: Installed (Intel app compatibility)"
             else
@@ -646,13 +415,6 @@ check_prerequisites() {
     fi
     check_pass "All required system tools available"
 
-    # =============================================================================
-    # [ENHANCEMENT] Verify core data availability before proceeding
-    # Problem:  If system_profiler fails completely, many subsequent checks will
-    #           produce misleading results (empty data interpreted as "clean").
-    # Solution: Quick sanity check that basic system data is accessible. Fail
-    #           early with clear message rather than produce unreliable results.
-    # =============================================================================
     show_progress "Verifying system data access"
     local test_profile
     test_profile=$(system_profiler SPHardwareDataType 2>/dev/null | head -5)
@@ -664,14 +426,6 @@ check_prerequisites() {
         exit 1
     fi
 
-    # =============================================================================
-    # [NEW CHECK] Internet Connectivity
-    # Problem:  Many verification steps benefit from internet (Activation Lock
-    #           verification online, checking Apple warranty, downloading updates).
-    #           Users should know connectivity status before proceeding.
-    # Solution: Quick ping to Apple's captive portal check (used by macOS itself).
-    #           Non-blocking, informational only - script works fully offline.
-    # =============================================================================
     show_progress "Checking network connectivity"
     local internet_available=false
     if curl -s --max-time 3 --head "https://www.apple.com/library/test/success.html" 2>/dev/null | grep -q "200"; then
@@ -699,49 +453,18 @@ check_prerequisites() {
 # =============================================================================
 # DATA CACHING
 # =============================================================================
-# [HISTORY]
-# Problem:  Each call to system_profiler takes 1-3 seconds. Earlier versions
-#           called it multiple times for different data types, resulting in
-#           10+ seconds of unnecessary waiting. Users reported slow feeling.
-#
-# Solution: Fetch commonly-used data types once at startup and cache in global
-#           variables. Parse cached data as needed. Single call per data type
-#           reduces total runtime significantly.
-#
-# [ENHANCEMENT - v10]
-# Added: GPU data cache for discrete GPU detection (important for thermal
-#        issues on 15"/16" MacBook Pro models with AMD graphics).
-# =============================================================================
 cache_system_data() {
     echo -e "  ${GREY}Gathering system information...${NC}"
 
-    # =========================================================================
-    # [OPTIMIZATION] Combined system_profiler call
-    # Problem:  Three separate system_profiler calls added 6-9 seconds total
-    #           startup time. Each call re-initializes the profiler framework.
-    # Solution: Single call requesting all data types at once. Output is split
-    #           afterward using awk. Reduces startup time by ~4-6 seconds.
-    # =========================================================================
     show_progress "System profiler data (combined)"
     local combined_profile
     combined_profile=$(system_profiler SPHardwareDataType SPPowerDataType SPDisplaysDataType 2>/dev/null)
 
     # Split combined output into individual caches
     HW_DATA_CACHE=$(echo "$combined_profile" | awk '/Hardware Overview:/,/^$|^[A-Z].*:$/{print}' | head -50)
-    # [BUGFIX] SPPowerDataType section header varies: "Power:" on desktops,
-    # "Battery Information:" on laptops. Previous pattern missed laptops entirely.
-    # Solution: Match either pattern, or capture everything between Power/Battery headers.
     POWER_DATA_CACHE=$(echo "$combined_profile" | awk '/Power:|Battery Information:/,/^[A-Z].*:$/{if(/^[A-Z].*:$/ && !/Power:/ && !/Battery/) exit; print}')
     GPU_DATA_CACHE=$(echo "$combined_profile" | awk '/Graphics\/Displays:/,/^[A-Z].*:$/{if(/^[A-Z].*:$/ && !/Graphics/) exit; print}')
 
-    # =========================================================================
-    # [BUGFIX] Robust fallback for hardware data
-    # Problem:  The awk splitting pattern broke on empty lines within sections,
-    #           leaving HW_DATA_CACHE non-empty but without actual data fields.
-    #           Original fallback only triggered on empty string.
-    # Solution: Check for presence of critical field (Serial Number) to validate
-    #           that parsing succeeded. Trigger fallback if field is missing.
-    # =========================================================================
     if [[ -z "$HW_DATA_CACHE" ]] || ! echo "$HW_DATA_CACHE" | grep -q "Serial Number"; then
         show_progress "Hardware data (fallback)"
         HW_DATA_CACHE=$(system_profiler SPHardwareDataType 2>/dev/null)
@@ -749,36 +472,16 @@ cache_system_data() {
     if [[ -z "$POWER_DATA_CACHE" ]]; then
         POWER_DATA_CACHE=$(system_profiler SPPowerDataType 2>/dev/null)
     fi
-    # [BUGFIX] GPU cache validation - check for actual GPU data, not just non-empty
-    # Problem:  GPU_DATA_CACHE could be non-empty but contain only header lines
-    #           without actual GPU information (awk pattern mismatch).
-    # Solution: Verify presence of key GPU field, not just non-empty string.
     if [[ -z "$GPU_DATA_CACHE" ]] || ! echo "$GPU_DATA_CACHE" | grep -qi "Chipset\|Metal\|VRAM\|Display"; then
         GPU_DATA_CACHE=$(system_profiler SPDisplaysDataType 2>/dev/null)
     fi
 
     show_progress "IORegistry data"
-    # =========================================================================
-    # [OPTIMIZATION] ioreg with -w0 flag
-    # Problem:  ioreg -l without width limit produces massively indented output,
-    #           making the cache 2-3x larger than necessary and grep slower.
-    #           Also caused 3-5 second delays on systems with complex IORegistry.
-    # Solution: Add -w0 to eliminate indentation whitespace. Reduces cache size
-    #           by ~60% and improves grep performance throughout script.
-    # =========================================================================
     IOREG_CACHE=$(ioreg -l -w0 2>/dev/null)
 
     clear_progress
     check_pass "System data cached successfully"
 
-    # =========================================================================
-    # [OPTIMIZATION] Additional system_profiler caches
-    # Problem:  Individual system_profiler calls for Camera, Audio, USB,
-    #           Thunderbolt, Bluetooth, and WiFi data added 6-18 seconds of
-    #           wait time. Each call reinitializes the profiler framework.
-    # Solution: Batch fetch all needed data types upfront and cache globally.
-    #           Functions then parse from cache instead of calling profiler.
-    # =========================================================================
     show_progress "Memory configuration"
     MEMORY_DATA_CACHE=$(system_profiler SPMemoryDataType 2>/dev/null)
     CAMERA_DATA_CACHE=$(system_profiler SPCameraDataType 2>/dev/null)
@@ -813,15 +516,6 @@ cache_system_data() {
         SYSTEM_CHIP=$(echo "$HW_DATA_CACHE" | grep "Processor Name:" | awk -F': ' '{print $2}' | xargs 2>/dev/null)
     fi
 
-    # =============================================================================
-    # [BUGFIX] Touch Bar Detection
-    # Problem:  Previous regex ^MacBookPro1[3-6] incorrectly matched models
-    #           WITHOUT Touch Bar (MacBookPro13,1 and MacBookPro14,1 are
-    #           13" models with function keys only). Also missed some
-    #           Touch Bar models. Led to incorrect manual check prompts.
-    # Solution: Explicit list of Touch Bar model identifiers. Only 2016-2020
-    #           Intel MacBook Pro models with Touch Bar are listed.
-    # =============================================================================
     case "$SYSTEM_MODEL_ID" in
         MacBookPro13,2|MacBookPro13,3|\
         MacBookPro14,2|MacBookPro14,3|\
@@ -831,12 +525,6 @@ cache_system_data() {
             ;;
     esac
 
-    # =============================================================================
-    # [ENHANCEMENT] Determine device form factor and built-in components
-    # Problem:  Testing for displays, cameras, keyboards on devices that don't
-    #           have them (Mac mini, Mac Studio, Mac Pro) wastes time and confuses.
-    # Solution: Set flags based on model name to control which tests are relevant.
-    # =============================================================================
     case "$SYSTEM_MODEL" in
         *"MacBook"*)
             DEVICE_TYPE="laptop"
@@ -854,17 +542,6 @@ cache_system_data() {
             HAS_BUILTIN_MIC=true
             HAS_BUILTIN_KEYBOARD=false
             ;;
-        # =====================================================================
-        # [BUGFIX] Desktop Mac Component Detection
-        # Problem:  Previous code incorrectly stated Mac mini has no speakers
-        #           (only boot chime) and HAS a microphone. Also stated Mac
-        #           Studio has no speakers. Both are wrong per Apple specs:
-        #           - Mac mini (M1/M2/M4): Built-in speaker for full audio, NO mic
-        #           - Mac Studio: High-fidelity speaker system WITH Spatial Audio,
-        #             AND a studio-quality three-mic array
-        #           - Mac Pro: No built-in speaker, no mic (correct)
-        # Solution: Corrected flags based on Apple's official specifications.
-        # =====================================================================
         *"Mac mini"*)
             DEVICE_TYPE="desktop"
             HAS_BUILTIN_DISPLAY=false
@@ -902,9 +579,7 @@ cache_system_data() {
 
     verbose_info "Device type: $DEVICE_TYPE"
 
-
     # Detect Touch ID capability
-    # [OPTIMIZATION] Uses cached ioreg instead of separate call
     if echo "$IOREG_CACHE" | grep -q "AppleSEPKeyStore"; then
         HAS_TOUCH_ID=true
     fi
@@ -930,26 +605,6 @@ verify_physical_serial() {
     echo -e "  ${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
-    # =============================================================================
-    # [HISTORY - PASSIVE VS ACTIVE VERIFICATION]
-    # Problem:  Simply displaying system serial and asking "does it match?" let
-    #           users skim past subtle differences. Fraudsters swap logic boards
-    #           between cases - stolen/blacklisted logic board in clean case.
-    #           Character confusion common: '8' vs 'B', 'O' vs '0', 'I' vs '1',
-    #           'S' vs '5'. Users frequently missed these on quick visual checks.
-    #
-    # Solution: Force active comparison. User MUST type serial they see on the
-    #           physical case. Script compares to system-reported serial. Both
-    #           normalized (uppercase, no spaces/dashes) before comparison to
-    #           reduce false negatives from formatting differences.
-    # =============================================================================
-
-    # =========================================================================
-    # [BUGFIX] Handle missing system serial gracefully
-    # Problem:  If SYSTEM_SERIAL is empty (parsing failed), any user input
-    #           would cause a "mismatch" false positive, creating panic.
-    # Solution: Detect empty serial early and fail with clear instructions.
-    # =========================================================================
     if [[ -z "$SYSTEM_SERIAL" ]]; then
         check_fail "Could not retrieve system serial number!"
         check_info "Open: Apple Menu > About This Mac > More Info > System Report"
@@ -973,13 +628,6 @@ verify_physical_serial() {
 
     echo ""
 
-    # =========================================================================
-    # [ENHANCEMENT] Serial number input validation
-    # Problem:  No validation of entered serial number. Typos or accidental
-    #           inputs (e.g., just "ok") were accepted without warning.
-    #           Apple serials have specific lengths (11-12 characters).
-    # Solution: Warn if input has implausible length.
-    # =========================================================================
     if [[ -z "$user_serial" ]]; then
         check_warn "No serial entered - comparison skipped"
         add_manual_check "CRITICAL: Compare case serial with $SYSTEM_SERIAL"
@@ -1022,11 +670,6 @@ verify_physical_serial() {
 check_system_identity() {
     print_section "PHASE 2: SYSTEM IDENTITY"
 
-    # =============================================================================
-    # [ENHANCEMENT] Show device type in identity section
-    # Problem:  Just showing model name didn't clarify what type of Mac it is.
-    # Solution: Include device type classification for clarity.
-    # =============================================================================
     local type_label=""
     case "$DEVICE_TYPE" in
         "laptop") type_label="Laptop" ;;
@@ -1039,13 +682,6 @@ check_system_identity() {
     check_info "Chip/CPU:   ${SYSTEM_CHIP:-Unknown}"
     check_info "Memory:     ${SYSTEM_RAM:-Unknown}"
 
-    # =========================================================================
-    # [NEW CHECK] RAM Type and Speed Details
-    # Problem:  Just showing "16 GB" doesn't reveal if RAM is upgradeable,
-    #           what speed it runs at, or if it's soldered. Important for
-    #           future upgrade planning and verifying advertised specs.
-    # Solution: Extract and display RAM type (DDR4/DDR5/LPDDR) and speed.
-    # =========================================================================
     local ram_type ram_speed
     # [OPTIMIZATION] Use cached memory data
     ram_type=$(echo "$MEMORY_DATA_CACHE" | grep "Type:" | head -1 | awk -F': ' '{print $2}' | xargs)
@@ -1098,13 +734,6 @@ check_system_identity() {
         add_manual_check "Test Touch ID: System Preferences > Touch ID (requires user setup)"
     fi
 
-    # =============================================================================
-    # [NEW] Apple Warranty & Coverage Reminder
-    # Problem:  Buyers often forget to verify warranty status. AppleCare+ coverage
-    #           significantly affects used Mac value. Script cannot check this
-    #           directly (requires Apple ID authentication), but should remind.
-    # Solution: Add manual check with direct URL for warranty verification.
-    # =============================================================================
     add_manual_check "Check warranty: https://checkcoverage.apple.com (Serial: $SYSTEM_SERIAL)"
 }
 
@@ -1116,20 +745,6 @@ check_enterprise_locks() {
     print_section "PHASE 3: ENTERPRISE LOCKS (MDM/DEP)"
 
     show_progress "Checking enrollment status"
-
-    # =============================================================================
-    # [HISTORY - MDM DETECTION]
-    # Problem:  Simple grep for "MDM" produced false positives/negatives across
-    #           macOS versions. Output format changed between releases. Some
-    #           partially-wiped enterprise devices showed confusing results.
-    #
-    # Solution: Check for BOTH "Enrolled via DEP: No" AND "MDM enrollment: No".
-    #           Any other combination indicates potential enterprise control.
-    #           Also check JAMF-specific paths and common MDM artifacts.
-    #
-    # Note:     DEP (Device Enrollment Program) renamed to ABM/ASM (Apple
-    #           Business/School Manager) but technical identifiers unchanged.
-    # =============================================================================
 
     local mdm_output dep_status mdm_status
     mdm_output=$(profiles status -type enrollment 2>/dev/null)
@@ -1166,16 +781,6 @@ check_enterprise_locks() {
             ;;
     esac
 
-    # =============================================================================
-    # [HISTORY - JAMF DETECTION]
-    # Problem:  JAMF Pro is most common enterprise MDM for Macs. Sometimes MDM
-    #           enrollment appears clean but JAMF remnants remain from incomplete
-    #           wipe, indicating device was previously enterprise-owned.
-    #
-    # Solution: Check filesystem paths specific to JAMF installations. Presence
-    #           of any indicates current or previous enterprise use.
-    # =============================================================================
-
     print_subsection "JAMF Enterprise Management"
     local jamf_paths=(
         "/usr/local/bin/jamf"
@@ -1187,14 +792,6 @@ check_enterprise_locks() {
         "/Library/Application Support/JAMF"
     )
 
-    # =============================================================================
-    # [REFACTOR] Use centralized path checker
-    # Problem:  Duplicated path-checking logic across MDM, JAMF, and enterprise
-    #           software detection. Inconsistent output formatting and harder
-    #           to maintain. The check_paths_exist function was defined but
-    #           never used (dead code).
-    # Solution: Utilize the existing check_paths_exist function for consistency.
-    # =============================================================================
     local jamf_found_paths
     jamf_found_paths=$(check_paths_exist "${jamf_paths[@]}")
 
@@ -1209,9 +806,6 @@ check_enterprise_locks() {
 
     # Configuration profiles
     print_subsection "Configuration Profiles"
-    # [BUGFIX] grep -c outputs "0" but exits with code 1 when no matches.
-    # Using || echo "0" caused "0\n0" output, breaking integer comparison.
-    # Solution: Capture output, let grep fail silently, default to 0 if empty.
     local mdm_profiles
     mdm_profiles=$(profiles list 2>/dev/null | grep -c "com.apple.mdm") || true
     mdm_profiles=${mdm_profiles:-0}
@@ -1255,19 +849,6 @@ check_enterprise_locks() {
 
 check_activation_lock() {
     print_section "PHASE 4: ACTIVATION LOCK (iCloud)"
-
-    # =============================================================================
-    # [HISTORY]
-    # Problem:  Many scripts completely missed this critical check. An Activation-
-    #           Locked device is essentially unusable by buyer without original
-    #           owner's Apple ID credentials. Cannot be bypassed by Apple.
-    #
-    # Solution: Check system_profiler output for "Activation Lock Status" field.
-    #           Available on macOS 10.15+ for Apple Silicon and T2-equipped Intel.
-    #
-    # Limitation: Check only works when booted into OS. In Recovery Mode,
-    #             Activation Lock manifests as login prompt instead.
-    # =============================================================================
 
     local activation_status
     activation_status=$(echo "$HW_DATA_CACHE" | grep "Activation Lock" | awk -F': ' '{print $2}' | xargs 2>/dev/null)
@@ -1314,18 +895,6 @@ check_activation_lock() {
 
 check_storage_health() {
     print_section "PHASE 5: STORAGE HEALTH"
-
-    # =============================================================================
-    # [HISTORY - BOOT VOLUME DETECTION]
-    # Problem:  Earlier versions hardcoded /dev/disk0 as boot drive. Incorrect for:
-    #           (a) External boot drives
-    #           (b) APFS containers where synthesized volume isn't on disk0
-    #           (c) Fusion Drives with complex disk layouts
-    #           (d) Multiple internal drives (Mac Pro, Mac Studio)
-    #
-    # Solution: Start from root filesystem (/), trace back to physical device,
-    #           check SMART on that device. Handles all edge cases correctly.
-    # =============================================================================
 
     local boot_device_raw boot_device
     boot_device_raw=$(df / 2>/dev/null | tail -1 | awk '{print $1}')
@@ -1384,23 +953,8 @@ check_storage_health() {
             ;;
     esac
 
-    # =========================================================================
-    # [ENHANCEMENT] Human-readable storage units
-    # Problem:  df -h outputs "Gi" (gibibytes) which confuses non-technical
-    #           users who expect "GB". While technically different (1 GiB =
-    #           1.074 GB), for a used Mac audit the distinction is irrelevant.
-    # Solution: Use df with -H flag (SI units: GB, MB) instead of -h (binary).
-    #           More intuitive for average users comparing to advertised specs.
-    # =========================================================================
     print_subsection "Volume Usage"
     local free_space used_pct
-    # =========================================================================
-    # [BUGFIX] Free space formatting with proper unit display
-    # Problem:  df -H outputs "182G" without space or full "GB" suffix.
-    #           This looked incomplete and unprofessional in output.
-    # Solution: Post-process the output to add space and full unit name.
-    #           Handles G, M, T suffixes for various storage sizes.
-    # =========================================================================
     local raw_free
     raw_free=$(df -H / 2>/dev/null | tail -1 | awk '{print $4}')
     # Add space before unit and expand abbreviation
@@ -1428,12 +982,6 @@ check_battery_health() {
     print_section "PHASE 6: BATTERY HEALTH"
 
     # Check if device has a battery
-    # =============================================================================
-    # [ENHANCEMENT] Clear messaging for desktop Macs without battery
-    # Problem:  Original message "No battery detected" was ambiguous - could be
-    #           interpreted as a hardware fault rather than expected behavior.
-    # Solution: Explicitly state this is normal for the device type.
-    # =============================================================================
     if ! echo "$POWER_DATA_CACHE" | grep -q "Battery Information"; then
         case "$DEVICE_TYPE" in
             "desktop"|"all-in-one")
@@ -1456,12 +1004,6 @@ check_battery_health() {
     local cycles_int
     cycles_int=$(safe_int "$cycles" 0)
 
-    # =========================================================================
-    # [REFACTOR] Use threshold constants for battery cycle evaluation
-    # Problem:  Hardcoded cycle thresholds made maintenance difficult and
-    #           values were inconsistent with Apple's official guidelines.
-    # Solution: Reference named constants defined at script start.
-    # =========================================================================
     if [[ $cycles_int -gt 0 ]]; then
         if [[ $cycles_int -lt 100 ]]; then
             check_pass "Cycles: $cycles_int (like new)"
@@ -1504,28 +1046,7 @@ check_battery_health() {
             ;;
     esac
 
-    # =============================================================================
-    # [HISTORY - BATTERY CAPACITY CALCULATION]
-    # Problem:  Calculating health percentage (current/design capacity * 100)
-    #           requires floating-point math. 'bc' not installed by default on
-    #           all Macs. Script failed silently or crashed when bc missing.
-    #
-    # Solution: Use 'awk' for calculation. POSIX standard, always available on
-    #           macOS. Slightly more verbose but guaranteed to work.
-    # =============================================================================
-
     print_subsection "Capacity Health"
-    # =========================================================================
-    # [BUGFIX] Battery capacity detection on modern macOS
-    # Problem:  Previous code searched for "Design Capacity" which doesn't exist
-    #           on most Macs. When not found, fallback defaulted to 1, causing
-    #           absurd calculations like "399400%" (3994mAh / 1mAh).
-    # Solution: Try multiple field names for maximum capacity percentage.
-    #           Apple uses different names across macOS versions:
-    #           - "Maximum Capacity" (common)
-    #           - "State of Health" (some versions)
-    #           If percentage not found, show raw mAh without bogus calculation.
-    # =========================================================================
     local max_pct
     # Try multiple patterns - Apple changed field names across versions
     max_pct=$(echo "$POWER_DATA_CACHE" | grep -E "Maximum Capacity|State of Health|MaxCapacity" | grep -oE '[0-9]+%' | tr -d '%' | head -1)
@@ -1557,24 +1078,10 @@ check_battery_health() {
         fi
     fi
 
-    # =========================================================================
-    # [BUGFIX] Battery-specific manufacturer detection
-    # Problem:  Previous grep for "Manufacturer" matched ANY device in ioreg,
-    #           not just the battery. This caused false positives like
-    #           "C-Media Electronics Inc." (a USB audio chip manufacturer)
-    #           being reported as a third-party battery - alarming users
-    #           unnecessarily and undermining trust in the script.
-    # Solution: Use ioreg with specific class filter (-c AppleSmartBattery)
-    #           to query ONLY the battery device. This ensures we get the
-    #           actual battery manufacturer, not random USB peripherals.
-    #           Apple-authorized battery manufacturers include:
-    #           - Apple Inc., SMP (Simplo), SWD (Sunwoda), DSY (Desay)
-    # =========================================================================
     print_subsection "Battery Authenticity"
     local battery_mfg=""
 
     # Query specifically the AppleSmartBattery class - NOT the full ioreg cache
-    # The -c flag filters to only that IOClass, avoiding false matches
     battery_mfg=$(ioreg -rc AppleSmartBattery 2>/dev/null | \
         grep '"Manufacturer"' | \
         head -1 | \
@@ -1588,15 +1095,6 @@ check_battery_health() {
             sed 's/.*= *"\([^"]*\)".*/\1/')
     fi
 
-    # =========================================================================
-    # [BUGFIX] Battery manufacturer evaluation with proper logic flow
-    # Problem:  Previous code had regex matching DSY/SMP/SWD in first elif,
-    #           then separate elifs for each that were never reached.
-    #           User saw "DSY (genuine/authorized)" instead of the more
-    #           informative "Desay Battery (Apple-authorized)" explanation.
-    # Solution: Check specific abbreviations FIRST before the generic regex.
-    #           This provides better user feedback about what each code means.
-    # =========================================================================
     if [[ -z "$battery_mfg" ]]; then
         check_info "Manufacturer: Not reported (normal for some Mac models)"
     elif [[ "$battery_mfg" == "Apple" || "$battery_mfg" == "Apple Inc." ]]; then
@@ -1620,29 +1118,12 @@ check_battery_health() {
 # =============================================================================
 # PHASE 7: GPU & GRAPHICS
 # =============================================================================
-# [HISTORY - NEW IN v10]
-# Problem:  Original script completely missed GPU checks. 15"/16" MacBook Pro
-#           models with AMD discrete GPUs are notorious for GPU failures
-#           (artifacting, crashes, thermal issues). Many used Macs sold because
-#           of failing dGPU. Also, GPU swaps in repairs not disclosed.
-#
-# Solution: Dedicated GPU section checking for discrete graphics, GPU health
-#           indicators, and providing thermal test guidance specific to GPU.
-# =============================================================================
 
 check_gpu_health() {
     print_section "PHASE 7: GPU & GRAPHICS"
 
     print_subsection "Graphics Hardware"
 
-    # =========================================================================
-    # [BUGFIX] GPU detection with inline fallback
-    # Problem:  GPU_DATA_CACHE from awk splitting often empty or malformed.
-    #           Even with fallback in cache_system_data, data was sometimes
-    #           missing key fields. MacBook Air with Intel Iris GPU not detected.
-    # Solution: Use local variable with fresh fetch if cache is inadequate.
-    #           This ensures GPU check works even if caching partially failed.
-    # =========================================================================
     local gpu_info="$GPU_DATA_CACHE"
 
     # Verify cache has actual GPU data, not just empty or header-only content
@@ -1718,15 +1199,6 @@ check_gpu_health() {
 
 check_component_authenticity() {
     print_section "PHASE 8: COMPONENT AUTHENTICITY"
-
-    # =============================================================================
-    # [ENHANCEMENT] Form-factor aware component testing
-    # Problem:  Original code tested for built-in display, camera, speakers on
-    #           ALL Macs including Mac mini, Mac Studio, Mac Pro which don't have
-    #           these components. This was confusing and unprofessional.
-    # Solution: Conditionally test only components that exist on this device type.
-    #           For desktop Macs, provide guidance for external peripherals instead.
-    # =============================================================================
 
     # =========================================================================
     # CAMERA
@@ -1830,14 +1302,6 @@ check_component_authenticity() {
                 add_manual_check "Re-test speakers: Play music, verify all speakers work"
                 ;;
         esac
-    # =========================================================================
-    # [ENHANCEMENT] Correct Messaging for Macs Without Speakers
-    # Problem:  The else-block here now only triggers for Mac Pro (the only
-    #           modern Mac without built-in speakers). Previous code lumped
-    #           all desktops together incorrectly. With the speaker flags
-    #           now correct, this block should only show for Mac Pro.
-    # Solution: More specific messaging for Mac Pro, the only speaker-less Mac.
-    # =========================================================================
     else
         # This branch now only applies to Mac Pro (no built-in speaker)
         check_info "No built-in speakers (Mac Pro requires external audio)"
@@ -2113,13 +1577,6 @@ check_security_posture() {
     local fv_status
     fv_status=$(fdesetup status 2>/dev/null)
 
-    # =============================================================================
-    # [BUGFIX] Complete FileVault check with proper else clause
-    # Problem:  Previous edit replaced only the if-block but left orphaned code
-    #           or missing else clause, causing formatting issues (extra newlines)
-    #           and potentially missing the "disabled" status message.
-    # Solution: Complete if/else/fi structure with both enabled and disabled cases.
-    # =============================================================================
     if echo "$fv_status" | grep -q "FileVault is On"; then
         check_warn "FileVault: ENABLED (disk is encrypted)"
         echo -e "    ${YELLOW}┌────────────────────────────────────────────────────────┐${NC}"
@@ -2167,28 +1624,12 @@ check_security_posture() {
 
         if echo "$t2_check" | grep -qi "T2"; then
             check_pass "T2 Security Chip: Present"
-            # =========================================================================
-            # [CLEANUP] Removed redundant Recovery Mode check
-            # Problem:  Recovery Mode test was being added here AND in
-            #           check_recovery_readiness(), causing duplicate checklist entry.
-            # Solution: Only add the firmware password check here. Recovery Mode
-            #           instruction is handled exclusively by check_recovery_readiness().
-            # =========================================================================
             add_manual_check "Verify no firmware password blocks boot options (hold Option on boot)"
         else
             check_info "T2 Chip: Not present (older Intel Mac)"
         fi
     fi
 
-    # =========================================================================
-    # [NEW CHECK] Secure Boot Policy (Apple Silicon)
-    # Problem:  Apple Silicon Macs can have reduced security boot policies that
-    #           allow unsigned kernels, disable SIP features, or enable kernel
-    #           debugging. Sellers may not disclose modified security settings.
-    #           A Mac in "Permissive Security" mode could have been jailbroken.
-    # Solution: Check bputil output for security policy. Full Security is the
-    #           default and safest. Any other mode warrants investigation.
-    # =========================================================================
     if [[ "$IS_APPLE_SILICON" == true ]]; then
         print_subsection "Secure Boot Policy (Apple Silicon)"
         local security_policy
@@ -2218,16 +1659,6 @@ check_security_posture() {
         fi
     fi
 
-    # =============================================================================
-    # [NEW CHECK] Firmware Password Detection (Intel Macs)
-    # Problem:  Intel Macs can have firmware passwords that prevent booting from
-    #           external media, Recovery Mode access, and NVRAM resets. A locked
-    #           Mac is severely limited for the new owner. Sellers may not
-    #           disclose this. Cannot be removed without proof of purchase at
-    #           Apple Store.
-    # Solution: Check NVRAM for firmware password indicators. Note: Full detection
-    #           requires attempting Recovery boot, but NVRAM hints are useful.
-    # =============================================================================
     if [[ "$IS_APPLE_SILICON" == false ]]; then
         print_subsection "Firmware Password (Intel)"
         local fw_mode
@@ -2249,24 +1680,7 @@ check_security_posture() {
         esac
     fi
 
-    # =========================================================================
-    # [NEW CHECK] Boot ROM Version (Intel Macs)
-    # Problem:  Outdated Boot ROM/EFI firmware may have security vulnerabilities
-    #           (Thunderstrike, etc.). Also indicates if Mac received updates.
-    # Solution: Display Boot ROM version for verification. Outdated versions
-    #           on supported Macs may indicate update issues.
-    # =========================================================================
     if [[ "$IS_APPLE_SILICON" == false ]]; then
-        # =========================================================================
-        # [BUGFIX] Boot ROM parsing with proper handling of complex version strings
-        # Problem:  Boot ROM version strings often contain nested colons, e.g.:
-        #           "Boot ROM Version: 2094.40.1.0.0 (iBridge: 22.16.12077.0.0,0)"
-        #           Using awk -F': ' split on ALL colons, truncating the output
-        #           to just "2094.40.1.0.0 (iBridge" - losing important info.
-        # Solution: Use sed to remove only the first occurrence of ": " (label),
-        #           preserving the entire version string including parenthetical.
-        #           Also clean up trailing whitespace/control characters.
-        # =========================================================================
         print_subsection "Boot ROM / EFI Firmware"
         local boot_rom_line boot_rom
 
@@ -2297,19 +1711,6 @@ check_security_posture() {
     fi
 
     # Tampering indicators
-    # =============================================================================
-    # [NEW CHECK] XProtect Security Definitions
-    # Problem:  Veraltete Sicherheitsdefinitionen bedeuten, dass bekannte Malware
-    #           nicht erkannt wird. Zeigt auch ob der Mac regelmäßig Updates bekam.
-    # Solution: XProtect-Version und Datum prüfen, warnen wenn sehr alt.
-    # =============================================================================
-    print_subsection "Malware Definitions (XProtect)"
-    # =========================================================================
-    # [BUGFIX] XProtect path changed in macOS 12+ and again in macOS 15
-    # Problem:  XProtect bundle location varies across macOS versions.
-    #           Original hardcoded path failed on newer systems.
-    # Solution: Check multiple known paths, use first that exists.
-    # =========================================================================
     local xprotect_plist=""
     local xprotect_paths=(
         "/System/Library/CoreServices/XProtect.bundle/Contents/Resources/XProtect.meta.plist"
@@ -2374,57 +1775,20 @@ check_ports_connectivity() {
     local tb_info="$TB_DATA_CACHE"
 
     # [BUGFIX] grep -c with || echo "0" causes "0\n0" on no matches
-    # =========================================================================
-    # [BUGFIX] Robust USB controller counting
-    # Problem:  grep -c returns exit code 1 when no matches found, but command
-    #           substitution captures stdout (the count "0"), not exit code.
-    #           The || true was unnecessary and the ${:-0} fallback never
-    #           triggered because grep -c always outputs a number.
-    # Solution: Simplified logic, added validation for integer.
-    # =========================================================================
     local usb_controllers
     usb_controllers=$(echo "$usb_info" | grep -c "Host Controller" 2>/dev/null || echo "0")
     usb_controllers=$(safe_int "$usb_controllers" 0)
 
-    # =========================================================================
-    # [ENHANCEMENT] Detailed port count display
-
-    # =========================================================================
-    # [ENHANCEMENT] Detailed port count display
-    # Problem:  Showing only controller count was not meaningful for buyers.
-    #           The number of Thunderbolt/USB-C ports is purchase-relevant
-    #           since defective ports are a common issue on used MacBooks.
-    # Solution: Show both controller count and detected port count.
-    # =========================================================================
     if [[ "$usb_controllers" -gt 0 ]]; then
         check_pass "USB controllers: $usb_controllers"
     fi
 
-    # [BUGFIX] grep -c with || echo "0" causes "0\n0" on no matches
     local tb_ports
     tb_ports=$(echo "$tb_info" | grep -c "Port:" 2>/dev/null) || true
     tb_ports=${tb_ports:-0}
-    # =============================================================================
-    # [ENHANCEMENT] Model-specific USB-C port count validation
-    # Problem:  Previous check only flagged "fewer than 2 ports on MacBook Pro"
-    #           which was too generic. Different models have different expected
-    #           port counts. A 14" M3 Pro should have 3, Mac Studio has 6, etc.
-    # Solution: Map model identifiers to expected port counts. Flag if actual
-    #           count differs from expected (may indicate hardware damage).
-    # =============================================================================
     if [[ "$tb_ports" -gt 0 ]]; then
         check_info "Thunderbolt/USB-C ports detected: $tb_ports"
 
-        # =====================================================================
-        # [BUGFIX] Port Count Expectations - Updated Model Mapping
-        # Problem:  Previous mapping was outdated and incorrect:
-        #           - MacBookPro14,* are 2017 models (4 ports), not 14"/16"
-        #           - Missing M2/M3/M4 MacBook Pro models
-        #           - Missing newer Mac mini and Mac Studio models
-        #           - MacBook Pro 14" M3 base has 2 ports, Pro/Max have 3
-        # Solution: Comprehensive and accurate port count mapping based on
-        #           Apple's current specifications for all modern Macs.
-        # =====================================================================
         local expected_ports=0
         case "$SYSTEM_MODEL_ID" in
             # === MacBook Air ===
@@ -2535,15 +1899,6 @@ check_ports_connectivity() {
         check_warn "WiFi: Not detected"
     fi
 
-    # =========================================================================
-    # [BUGFIX] Robust WiFi interface detection
-    # Problem:  Previous awk command assumed Device line immediately follows
-    #           Hardware Port line. This failed when output had extra fields
-    #           or different formatting across macOS versions. Also failed to
-    #           handle "Wi-Fi" vs "AirPort" naming variations correctly.
-    # Solution: Use grep -A1 to get Device line, then extract interface name.
-    #           Handle both old "AirPort" and new "Wi-Fi" naming.
-    # =========================================================================
     local wifi_interface current_ssid
     wifi_interface=$(networksetup -listallhardwareports 2>/dev/null | \
         grep -A1 -E "Hardware Port: (Wi-Fi|AirPort)" | \
@@ -2554,14 +1909,6 @@ check_ports_connectivity() {
         local airport_output
         airport_output=$(networksetup -getairportnetwork "$wifi_interface" 2>/dev/null)
 
-        # =====================================================================
-        # [ENHANCEMENT] WiFi status with actionable guidance
-        # Problem:  "WiFi not connected" was just informational, but in a
-        #           purchase scenario you WANT to verify WiFi works. Simply
-        #           noting it's disconnected doesn't prompt action.
-        # Solution: If disconnected, add explicit manual check instruction.
-        #           If connected, show it as a pass (verified working).
-        # =====================================================================
         if echo "$airport_output" | grep -q "Current Wi-Fi Network:"; then
             current_ssid=$(echo "$airport_output" | sed 's/Current Wi-Fi Network: //')
             check_pass "Connected to: $current_ssid (WiFi verified working)"
@@ -2578,16 +1925,7 @@ check_ports_connectivity() {
         # WiFi is connected, just needs speed verification
         add_manual_check "Test WiFi speed: Run a speed test to verify full functionality"
     fi
-    # Note: If WiFi is NOT connected, the specific "IMPORTANT: Connect to WiFi..."
-    # check is added in the WiFi status block, which is more actionable
 
-    # =========================================================================
-    # [NEW CHECK] Ethernet Port Detection
-    # Problem:  Desktop Macs (Mac mini, Studio, Pro, iMac) have Ethernet ports
-    #           that can fail. Buyers should test wired networking. MacBook Pro
-    #           16" also sometimes used with Ethernet adapters.
-    # Solution: Check for Ethernet hardware and current connection status.
-    # =========================================================================
     print_subsection "Ethernet"
     local eth_interface
     eth_interface=$(networksetup -listallhardwareports 2>/dev/null | \
@@ -2616,16 +1954,6 @@ check_ports_connectivity() {
         esac
     fi
 
-    # =========================================================================
-    # [ENHANCEMENT] Model-specific port manual checks
-    # Problem:  Generic "if present" checks cluttered the checklist with
-    #           irrelevant items. MacBook Air has no SD slot, Mac mini has
-    #           no headphone jack on some models, etc. Users wasted time
-    #           looking for ports that don't exist.
-    # Solution: Check model identifier and only add relevant port tests.
-    #           Based on Apple's technical specifications per model.
-    # =========================================================================
-
     # Headphone jack - present on most Macs except some Mac mini configs
     case "$SYSTEM_MODEL_ID" in
         Macmini9,1)
@@ -2641,19 +1969,6 @@ check_ports_connectivity() {
             ;;
     esac
 
-    # =========================================================================
-    # [BUGFIX] SD Card Slot Detection - Corrected Model Identifiers
-    # Problem:  Previous code listed MacBookPro14,* as having SD slot. These
-    #           are actually 2017 MacBook Pro models which have NO SD slot.
-    #           The 2021+ MacBook Pro models with SD slots use different IDs:
-    #           - MacBookPro18,* = 2021 M1 Pro/Max (14"/16")
-    #           - Mac14,5/6/9/10 = 2023 M2 Pro/Max (14"/16")
-    #           - Mac15,3/6-11 = 2023 M3 series (14"/16")
-    #           - Mac16,1/5-8 = 2024 M4 series (14"/16")
-    #           Also: Mac Studio model IDs were incomplete.
-    # Solution: Comprehensive list of all models with SD card slots based on
-    #           Apple's official specifications.
-    # =========================================================================
     # SD card slot - only on specific MacBook Pro models and some iMacs
     case "$SYSTEM_MODEL_ID" in
         # MacBook Pro 14"/16" 2021 (M1 Pro/Max) - have SD slot
@@ -2692,14 +2007,6 @@ check_ports_connectivity() {
 # =============================================================================
 # PHASE 11: SYSTEM STABILITY (Kernel Panics)
 # =============================================================================
-# [HISTORY - NEW IN v10]
-# Problem:  Kernel panics indicate hardware instability (bad RAM, GPU issues,
-#           failing SSD, logic board problems). Seller may not disclose crash
-#           history. Panic logs persist across reboots and reveal problems.
-#
-# Solution: Check DiagnosticReports for kernel panic logs. Count recent panics,
-#           analyze causes if possible. High panic count = avoid purchase.
-# =============================================================================
 
 check_system_stability() {
     print_section "PHASE 11: SYSTEM STABILITY"
@@ -2717,13 +2024,6 @@ check_system_stability() {
     local panic_seconds=$((PANIC_RECENT_DAYS * 86400))
     local threshold_epoch=$((now_epoch - panic_seconds))
 
-    # =============================================================================
-    # [OPTIMIZATION] Single-pass panic file analysis
-    # Problem:  Previous implementation iterated through panic files twice -
-    #           once for total count and once for recent count. Inefficient
-    #           on systems with many panic logs.
-    # Solution: Count total and recent panics in single loop iteration.
-    # =============================================================================
     for dir in "$panic_dir" "$user_panic_dir"; do
         [[ ! -d "$dir" ]] && continue
         while IFS= read -r -d '' panic_file; do
@@ -2737,23 +2037,6 @@ check_system_stability() {
         done < <(find "$dir" -name "*.panic" -type f -print0 2>/dev/null)
     done
 
-    # =========================================================================
-    # [ENHANCEMENT] Panic analysis with cause detection
-    # Problem:  Simply reporting panic count without context left users
-    #           uncertain about severity. A single panic from a known macOS
-    #           bug is different from recurring GPU or I/O panics.
-    # Solution: Attempt to extract panic type from most recent panic file.
-    #           Common causes: GPU/graphics, I/O (disk), memory, kernel ext.
-    #           This helps buyer assess if issue is hardware vs software.
-    # =========================================================================
-    # =============================================================================
-    # [ENHANCEMENT] More Nuanced Panic Assessment
-    # Problem:  "No panic logs found" could mean (a) genuinely stable system, or
-    #           (b) system was freshly wiped to hide problems. Combined with
-    #           "recent install date" check, this gives better context.
-    # Solution: Cross-reference with macOS install date. Fresh install + no panics
-    #           is less reassuring than old install + no panics.
-    # =============================================================================
     if [[ $panic_count -eq 0 ]]; then
         # Check if this is a fresh install (where no panics is less meaningful)
         local install_age_days=999
@@ -2790,15 +2073,6 @@ check_system_stability() {
             local panic_content
             panic_content=$(head -100 "$latest_panic" 2>/dev/null)
 
-            # =========================================================================
-            # [ENHANCEMENT] Context-aware panic cause detection
-            # Problem:  Generic "GPU/Graphics related" for integrated GPUs was
-            #           misleading. Intel Iris/UHD panics are usually driver bugs
-            #           fixed by macOS updates, not hardware failures. Discrete
-            #           AMD/NVIDIA GPU panics are more concerning (actual hardware).
-            # Solution: Differentiate between integrated and discrete GPU panics.
-            #           Also detect specific panic signatures for better accuracy.
-            # =========================================================================
             if echo "$panic_content" | grep -qi "AMD\|Radeon"; then
                 panic_cause="Discrete GPU (AMD) - potential hardware issue"
             elif echo "$panic_content" | grep -qi "NVIDIA\|GeForce"; then
@@ -2865,14 +2139,6 @@ check_system_stability() {
     fi
 
     # Check for sleep/wake issues
-    # =============================================================================
-    # [UX FIX] Sleep/Wake Check with Timeout
-    # Problem:  'log show --last 7d' can take 30-120+ seconds on systems with
-    #           extensive logs. No progress indicator made script appear frozen.
-    #           Users aborted thinking it crashed, missing important checks.
-    # Solution: Add timeout, skip gracefully if too slow. Wake issues are
-    #           better detected via manual testing anyway.
-    # =============================================================================
     print_subsection "Sleep/Wake Issues"
     show_progress "Analyzing system logs (max 10s)"
 
@@ -2889,15 +2155,6 @@ check_system_stability() {
         local log_pid=$!
 
         # Wait up to 10 seconds
-        # =================================================================
-        # [UX] Reduced Sleep/Wake Log Analysis Timeout
-        # Problem:  10 second timeout felt too long for users, especially
-        #           when the log analysis often times out anyway on systems
-        #           with extensive logs. The wait provided no visible feedback.
-        # Solution: Reduce to 5 seconds. If logs are too large to parse in
-        #           5 seconds, they're too large for 10 seconds too. Manual
-        #           sleep/wake testing is more reliable anyway.
-        # =================================================================
         local waited=0
         while kill -0 $log_pid 2>/dev/null && [[ $waited -lt 5 ]]; do
             sleep 1
@@ -2932,29 +2189,9 @@ check_system_stability() {
             ;;
     esac
 
-    # =========================================================================
-    # [NEW CHECK] System Uptime - Suspicious reboot indicator
-    # Problem:  Sellers often reboot Mac shortly before meeting to hide
-    #           accumulated issues (high RAM usage, crashes). A Mac that
-    #           has been running longer shows more realistic behavior.
-    # Solution: Display uptime and warn if runtime is very short.
-    # =========================================================================
     print_subsection "System Uptime"
-    # =========================================================================
-    # [BUGFIX] Robust uptime calculation
-    # Problem:  Previous awk parsing of kern.boottime was fragile and broke
-    #           on different macOS versions with varying output formats.
-    #           Format: "{ sec = 1234567890, usec = 123456 }" but spacing varies.
-    # Solution: Use sed with flexible whitespace matching to extract epoch.
-    #           Fallback to 'uptime' command output if sysctl parsing fails.
-    # =========================================================================
     local boot_epoch uptime_seconds uptime_hours uptime_display
 
-    # [BUGFIX] kern.boottime format varies across macOS versions:
-    #   Old: "{ sec = 1234567890, usec = 123456 } Thu Jan 1 00:00:00 1970"
-    #   New: "sec = 1234567890, usec = 123456"
-    # Previous sed pattern failed on some formats, returning empty/0.
-    # Solution: More flexible extraction, validate result is reasonable.
     boot_epoch=$(sysctl -n kern.boottime 2>/dev/null | grep -oE 'sec = [0-9]+' | grep -oE '[0-9]+')
 
     # Validate: must be a number AND be a plausible epoch (after year 2000 = 946684800)
@@ -2965,17 +2202,6 @@ check_system_stability() {
         uptime_seconds=$((current_epoch - boot_epoch))
         uptime_hours=$((uptime_seconds / 3600))
 
-        # =================================================================
-        # [UX] Improved Uptime Display for Very Short Times
-        # Problem:  When uptime_seconds < 60, uptime_mins calculated to 0,
-        #           displaying "0 minutes (freshly booted)" which is
-        #           technically correct but not informative. Also, anything
-        #           under an hour got the same "freshly booted" warning even
-        #           if it was 45 minutes (reasonable for a demo).
-        # Solution: Show seconds for <2min, more nuanced messaging for
-        #           different time ranges. Under 5 minutes is suspicious,
-        #           5-60 minutes is notable but less concerning.
-        # =================================================================
         if [[ $uptime_seconds -lt 120 ]]; then
             # Less than 2 minutes - show seconds, very suspicious
             check_warn "Uptime: ${uptime_seconds} seconds (JUST booted!)"
@@ -3004,15 +2230,6 @@ check_system_stability() {
         fi
     fi
 
-    # =============================================================================
-    # [BUGFIX] macOS Update Status Check
-    # Problem:  Original code used `grep -c ... || echo "0"` which produced
-    #           "0\n0" when grep found no matches (grep outputs "0" but exits
-    #           with code 1, triggering the || clause to append another "0").
-    #           This caused bash integer comparison to fail with syntax error.
-    # Solution: Capture output first, then use grep -q for boolean check.
-    #           Avoid arithmetic comparison entirely by using string matching.
-    # =============================================================================
     print_subsection "macOS Update Status"
     local current_os current_build
     current_os=$(sw_vers -productVersion)
@@ -3034,13 +2251,6 @@ check_system_stability() {
         check_info "Update status: Could not determine (check manually)"
     fi
 
-    # =========================================================================
-    # [NEW CHECK] macOS Installation Date
-    # Problem:  A freshly installed macOS could indicate the seller wiped the
-    #           system to hide problems (crashes, malware). Conversely, a very
-    #           old install date confirms the system has been stable long-term.
-    # Solution: Check install date from /var/db/.AppleSetupDone or similar.
-    # =========================================================================
     print_subsection "macOS Installation Age"
     local install_date=""
 
@@ -3083,14 +2293,6 @@ check_system_stability() {
 # =============================================================================
 # PHASE 12: THERMAL SENSORS & SMC
 # =============================================================================
-# [NEW CHECK] Thermal Management Verification
-# Problem:  Faulty temperature sensors or SMC issues cause fans to run at
-#           max speed constantly OR never spin up (thermal throttling/damage).
-#           Sellers may not disclose overheating issues. Thermal paste
-#           degradation common in older Macs.
-# Solution: Check sensor availability and fan status. Abnormal readings
-#           indicate hardware issues or repairs.
-# =============================================================================
 
 check_thermal_sensors() {
     print_section "PHASE 12: THERMAL SENSORS"
@@ -3109,13 +2311,6 @@ check_thermal_sensors() {
             # This is normal, not a warning condition
             check_info "SMC Version: Not reported (normal for T2 Macs)"
         fi
-        # =====================================================================
-        # [ENHANCEMENT] SMC reset hint for troubleshooting
-        # Problem:  Many Intel Mac issues (fans, battery, keyboard backlight)
-        #           can be resolved via SMC reset. Buyers should know how to
-        #           perform this if symptoms appear after purchase.
-        # Solution: Always mention SMC reset option for Intel Macs.
-        # =====================================================================
         add_manual_check "Intel Mac: Try SMC reset if issues occur (Shift+Ctrl+Option+Power)"
     else
         check_info "Apple Silicon: Integrated power management"
@@ -3137,13 +2332,6 @@ check_thermal_sensors() {
         if [[ "$fan_count" -gt 0 ]]; then
             check_pass "Fan sensors detected: $fan_count"
 
-            # =============================================================================
-            # [ENHANCEMENT] Attempt to read actual fan speeds
-            # Problem:  Knowing sensors exist is less useful than knowing current RPM.
-            #           Stuck fans often report 0 RPM even when "detected".
-            # Solution: Try to extract fan speed values from ioreg. Display if available.
-            #           Note: Specific keys vary by Mac model, so this is best-effort.
-            # =============================================================================
             local fan_speeds
             fan_speeds=$(echo "$IOREG_CACHE" | grep -E "FanSpeed|CurrentSpeed|TargetSpeed" | \
                          grep -oE '[0-9]{3,4}' | head -3 | tr '\n' '/' | sed 's/\/$//')
@@ -3159,13 +2347,6 @@ check_thermal_sensors() {
             check_info "Fan sensor count unclear (normal for some models)"
         fi
     else
-        # =============================================================================
-        # [ENHANCEMENT] Form-factor aware fan detection
-        # Problem:  Original only checked for fanless MacBook Air. Mac Pro has
-        #           massive fans, Mac Studio has sophisticated cooling, etc.
-        #           Each device type has different cooling expectations.
-        # Solution: Check device type and set appropriate expectations.
-        # =============================================================================
         case "$DEVICE_TYPE" in
             "laptop")
                 if [[ "$SYSTEM_MODEL" == *"MacBook Air"* && "$IS_APPLE_SILICON" == true ]]; then
@@ -3210,30 +2391,12 @@ check_thermal_sensors() {
 # =============================================================================
 # PHASE 13: RECOVERY & REINSTALL READINESS
 # =============================================================================
-# [HISTORY - NEW IN v10]
-# Problem:  Buyers often want to clean install macOS after purchase. If Recovery
-#           partition is missing or damaged, or if device can't boot to Recovery,
-#           reinstall becomes much harder (need bootable USB or another Mac).
-#
-# Solution: Check diskutil for presence of Recovery volume/partition.
-# =============================================================================
 
 check_recovery_readiness() {
     print_section "PHASE 13: RECOVERY READINESS"
 
     print_subsection "Recovery Partition"
     local recovery_found=false
-
-    # =========================================================================
-    # [BUGFIX] Robust Recovery partition detection
-    # Problem:  Previous method was unreliable with APFS containers and could
-    #           falsely identify external drives as Recovery. APFS uses hidden
-    #           "Preboot" and Recovery volumes with different structure.
-    # Solution: Combine multiple detection methods:
-    #           1. Check APFS container of boot volume
-    #           2. Use diskutil apfs listVolumeGroups for Recovery role
-    #           3. Fallback to classic partition search for older systems
-    # =========================================================================
 
     # Method 1: APFS Volume Group Check (most modern approach)
     local boot_disk
@@ -3265,12 +2428,6 @@ check_recovery_readiness() {
 
     if [[ "$recovery_found" == true ]]; then
         check_pass "Recovery System: Present"
-        # =====================================================================
-        # [BUGFIX] Correct conditional Recovery instruction
-        # Problem:  ${VAR:+x}${VAR:-y} syntax doesn't work with boolean strings.
-        #           "false" is not empty, so both parts were concatenated.
-        # Solution: Explicit if/else for clear case distinction.
-        # =====================================================================
         if [[ "$IS_APPLE_SILICON" == true ]]; then
             add_manual_check "Test Recovery Mode: Restart + hold Power button"
         else
@@ -3295,13 +2452,6 @@ check_recovery_readiness() {
 
 # =============================================================================
 # PHASE 14: TIME MACHINE STATUS
-# =============================================================================
-# [NEW CHECK] Time Machine backup configuration
-# Problem:  Time Machine status reveals if Mac was actively used for data
-#           storage. An "always excluded" list full of user folders may indicate
-#           the seller was hiding data. Also shows if local snapshots exist.
-# Solution: Check TM destination and exclusion list. Inform buyer about any
-#           attached backup drives (should be removed before sale).
 # =============================================================================
 
 check_time_machine() {
@@ -3356,15 +2506,6 @@ check_time_machine() {
 run_stress_test() {
     print_section "PHASE 15: THERMAL STRESS TEST"
 
-    # =============================================================================
-    # [BUGFIX] CPU Core Count Definition
-    # Problem:  Variable $cpu_cores wurde verwendet ohne je definiert zu werden.
-    #           Dies führte dazu, dass die Stress-Test-Schleife null Iterationen
-    #           hatte und somit kein CPU-Load erzeugt wurde. Der gesamte
-    #           Stress-Test war dadurch wirkungslos.
-    # Solution: CPU-Kerne via sysctl abfragen. Fallback auf 4 Kerne wenn
-    #           sysctl fehlschlägt (unwahrscheinlich, aber defensiv).
-    # =============================================================================
     local cpu_cores
     cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
@@ -3377,14 +2518,6 @@ run_stress_test() {
     local cores_display
     cores_display=$(printf "%2d" "$cpu_cores")
 
-    # =============================================================================
-    # [BUGFIX] Stress Test Box Alignment
-    # Problem:  Dynamic message with variable cpu_cores and STRESS_TEST_DURATION
-    #           caused misaligned box borders. The emoji also takes variable
-    #           terminal width depending on font rendering.
-    # Solution: Use printf with fixed field width for all variable content lines.
-    #           Emojis removed from box structure (placed outside for compatibility).
-    # =============================================================================
     echo -e "  ${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
     echo -e "  ${YELLOW}║           *** THERMAL STRESS TEST ***                      ║${NC}"
     echo -e "  ${YELLOW}╠════════════════════════════════════════════════════════════╣${NC}"
@@ -3406,17 +2539,6 @@ run_stress_test() {
     echo -e "  Press ${BOLD}[S]${NC} to skip this test."
     echo ""
 
-    # =============================================================================
-    # [BUGFIX] Clear input buffer before critical read
-    # Problem:  Previous read commands (display test y/n, audio test y/n) leave
-    #           trailing newlines/characters in the input buffer. When user types
-    #           'y' then Enter, the Enter remains buffered. The next read -n 1
-    #           immediately consumes this buffered Enter, causing the stress test
-    #           to start without any actual user input.
-    # Solution: Flush stdin buffer using read with timeout before the real prompt.
-    #           The -t 0.1 gives a tiny window to drain any buffered characters.
-    #           Loop ensures we catch multiple buffered characters if present.
-    # =============================================================================
     # Flush any buffered input (leftover Enter keys from previous prompts)
     while read -r -t 0.1 -n 1000 discard 2>/dev/null; do :; done
 
@@ -3425,21 +2547,8 @@ run_stress_test() {
     read -r -n 1 user_choice
     echo ""  # Newline after single-char input
 
-    # =========================================================================
-    # [BUGFIX] Bash 3.2 Lowercase Compatibility
-    # Problem:  ${var,,} syntax for lowercase conversion requires Bash 4.0+.
-    #           macOS ships with Bash 3.2 due to GPL v3 licensing. Using this
-    #           syntax causes "bad substitution" error on stock macOS Terminal.
-    # Solution: Explicit comparison against both cases instead of conversion.
-    # =========================================================================
     if [[ "$user_choice" == "s" || "$user_choice" == "S" ]]; then
         check_info "Stress test skipped by user"
-        # =====================================================================
-        # [ENHANCEMENT] More specific stress test instructions when skipped
-        # Problem:  "Open multiple heavy apps" is vague. Users unsure what
-        #           qualifies as "heavy" or how long to run the test.
-        # Solution: Provide concrete, actionable stress test instructions.
-        # =====================================================================
         add_manual_check "STRESS TEST: Open 3+ browser tabs with YouTube, run for 5+ minutes"
         add_manual_check "During stress: Listen for fan noise, check case temperature"
         return
@@ -3513,14 +2622,6 @@ generate_report() {
         echo ""
     fi
 
-    # =============================================================================
-    # [ENHANCEMENT] Apple Diagnostics Reminder
-    # Problem:  This script checks many things but cannot perform low-level
-    #           hardware diagnostics (RAM test, sensor calibration, etc.).
-    #           Apple Diagnostics is built into every Mac and catches issues
-    #           this script cannot detect.
-    # Solution: Always recommend running Apple Diagnostics as final step.
-    # =============================================================================
     echo ""
     echo -e "${MAGENTA}${BOLD}  RECOMMENDED: Run Apple Diagnostics for hardware verification${NC}"
     if [[ "$IS_APPLE_SILICON" == true ]]; then
@@ -3620,14 +2721,14 @@ main() {
     check_activation_lock       # Phase 4
     check_storage_health        # Phase 5
     check_battery_health        # Phase 6
-    check_gpu_health            # Phase 7 (New)
+    check_gpu_health            # Phase 7
     check_component_authenticity # Phase 8
     check_security_posture      # Phase 9
     check_ports_connectivity    # Phase 10
     check_system_stability      # Phase 11
-    check_thermal_sensors       # Phase 12 (New)
+    check_thermal_sensors       # Phase 12
     check_recovery_readiness    # Phase 13
-    check_time_machine          # Phase 14 (new)
+    check_time_machine          # Phase 14
     run_stress_test             # Phase 15
 
     # Finalize
