@@ -1,6 +1,8 @@
 # MAC AUDIT PUNK — mac-audit.sh
 
-Deutsch: Kurzbeschreibung
+Deutsch / German (English below!)
+
+Kurzbeschreibung
 
 mac-audit.sh ist ein interaktives, Read‑Only Bash‑Skript zur schnellen Überprüfung gebrauchter Macs vor dem Kauf. Es führt zahlreiche automatische Checks (Hardware‑/Software‑Identität, MDM/DEP, Activation Lock, Speicher‑/Batterie‑Zustand, GPU, Sensoren, Konnektivität, Kernel‑Panics, Recovery/TimeMachine) und eine optionale 60‑Sekunden Thermik‑/Lautstärke‑Stresstest durch.
 
