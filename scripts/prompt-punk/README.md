@@ -52,9 +52,6 @@ Nach Änderung: aktiviere die neue Konfiguration mit `exec zsh` oder `source ~/.
 - Bei Schreibproblemen: Berechtigungen der `.zshrc` bzw. des Elternverzeichnisses prüfen.
 - Wenn das Skript nichts ändert, wurde möglicherweise bereits der gleiche Prompt gesichert (Deduplication).
 
-## Lizenz / Autor
-Dieses Skript ist Teil des Repositories `thekryz/script_collection` — siehe die Lizensdatei des Repos für Lizenzinformationen.
-
 ---
 
 English
@@ -108,6 +105,3 @@ After making changes: activate the new config with `exec zsh` or `source ~/.zshr
 - The script warns about broken symlinks for `$ZSHRC` and the backup directory.
 - For write errors, check permissions of `.zshrc` and its parent directory.
 - If a change is skipped, it may be identical to the latest backup (deduplication).
-
-## License / Author
-Part of the repository `thekryz/script_collection`. See the repository LICENSE for license details.
