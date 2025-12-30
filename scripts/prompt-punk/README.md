@@ -1,6 +1,6 @@
 # prompt-punk
 
-Deutsch / German
+Deutsch / German (English below!)
 
 ## Kurzbeschreibung
 prompt-punk ist ein kleines zsh-Skript, das es dir erlaubt, deine Zsh-PROMPT-Definition schnell zu ändern. Es bietet eine interaktive Auswahl von vordefinierten Stilen, setzt einzelne Stile per Option, erstellt automatische Backups deiner .zshrc und erlaubt das Wiederherstellen eines Backups.
