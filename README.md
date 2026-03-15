@@ -44,7 +44,3 @@ chmod +x scripts/*.sh
 # Run a script (read its header docs first)
 ./scripts/mac-audit.sh --help
 ```
-
----
-
-If you'd like, I can expand any of the script sections into a longer README per-script (examples, flags, cautions).
